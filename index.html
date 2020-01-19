@@ -1,0 +1,162 @@
+<!doctype html>
+
+<html lang="fr">
+    <head>
+
+        <!-- java script-->
+        <script src="https://cdn.jsdelivr.net/npm/promise-polyfill@7/dist/polyfill.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/fetch/2.0.3/fetch.js"></script>
+        <script src="https://unpkg.com/dropbox/dist/Dropbox-sdk.min.js"></script>
+        <script src="https://unpkg.com/dropbox/dist/DropboxTeam-sdk.min.js"></script>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.4.4/jquery.js"></script>
+        <script src="http://maps.google.com/maps/api/js"></script>
+
+        <!-- Required meta tags -->
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <meta http-equiv="x-ua-compatible" content="IE=edge">
+
+        <!-- Bootstrap CSS -->
+        <link rel="stylesheet" href="bootstrap-4.4.1-dist/css/bootstrap.css">
+        <link rel="stylesheet" href="style.css">
+
+        <title>ImportFile!</title>
+    </head>
+    <body>
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-3 col-sm-6 col-12">
+                    <img id="logo"    src="https://www.dfhi-isfates.eu/wp-content/themes/fbo-dfhi/assets/img/logo-dfhi.svg" alt="Logo Isfates">
+                </div>
+                <div class="col-lg-6 col-sm-8 col-12">
+                    <h1 id="title">Déposez des fichiers</h1>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="card" >
+                <div class="card-body">
+                    <p class="card-text">
+                    <div class="file-upload-wrapper">
+                        <form onSubmit="return uploadFile()">
+                            <input type="file" id="file-upload" />
+                            <button type="submit">Déposez un fichier</button>
+                        </form>
+                        <div id="results"></div>
+                    </div>
+                </div>
+            </div>
+            <h2> Les fichiers contenus dans la dropbox </h2>
+            <div id="list"></div>
+            <h2> Vous nous trouvez á ces adresses</h2>
+            <div id="gmap" style= "width:80%; height:350px;"></div>
+
+        </div>
+
+        <!-- java script function -->
+        <script>
+            $(function(){
+                var latlng = new google.maps.LatLng(49.1144623, 6.175345);
+                var latlng1 = new google.maps.LatLng(49.2452356, 6.9530343);
+                var map = new google.maps.Map(document.getElementById('gmap'),{
+                  zoom : 8,
+                  center : latlng,
+                  mapTypeId: google.maps.MapTypeId.ROADMAP
+                });
+
+                var marker = new google.maps.Marker({
+                  position : latlng,
+                  map : map,
+                  title : 'Rue augutin fresnel',
+                  draggable : true
+
+                });
+
+                var marker = new google.maps.Marker({
+                  position : latlng1,
+                  map : map,
+                  title : 'Mülhauserstraße',
+                  draggable : true
+
+                });
+            });
+
+            var dbx = new Dropbox.Dropbox({ accessToken: 'aK0Vw-8moeAAAAAAAAAAeTnZGlSrkmpa9tASczZQ15-lsnr-_WskrD7nllha-aR2', fetch });
+            dbx.filesListFolder({path: ''}).then(function(response) {
+                  console.log(response);
+                  var ul = document.getElementById("list");
+                  var li = document.createElement("li");
+                  for(let file of response.entries) {
+                    document.getElementById("list").innerHTML += "<li>"  + file.name + "</li>";
+                  }
+              })
+              .catch(function(error) {
+                  console.log(error);
+              });
+
+            function uploadFile() {
+                  const UPLOAD_FILE_SIZE_LIMIT = 150 * 1024 * 1024;
+                  var ACCESS_TOKEN = 'aK0Vw-8moeAAAAAAAAAAeTnZGlSrkmpa9tASczZQ15-lsnr-_WskrD7nllha-aR2';
+                  var dbx = new Dropbox.Dropbox({ accessToken: ACCESS_TOKEN});
+                  var fileInput = document.getElementById('file-upload');
+                  var file = fileInput.files[0];
+
+                  if (file.size < UPLOAD_FILE_SIZE_LIMIT) { // File is smaller than 150 Mb - use filesUpload API
+                      dbx.filesUpload({path: '/' + file.name, contents: file})
+                          .then(function(response) {
+                              var results = document.getElementById('results');
+                              results.appendChild(document.createTextNode('File uploaded!'));
+                              console.log(response);
+                          })
+                          .catch(function(error) {
+                              console.error(error);
+                          });
+                  } else { // File is bigger than 150 Mb - use filesUploadSession* API
+                      const maxBlob = 8 * 1000 * 1000; // 8Mb - Dropbox JavaScript API suggested max file / chunk size
+
+                      var workItems = [];
+
+                      var offset = 0;
+
+                      while (offset < file.size) {
+                          var chunkSize = Math.min(maxBlob, file.size - offset);
+                          workItems.push(file.slice(offset, offset + chunkSize));
+                          offset += chunkSize;
+                      }
+
+                      const task = workItems.reduce((acc, blob, idx, items) => {
+                          if (idx == 0) {
+                              // Starting multipart upload of file
+                              return acc.then(function() {
+                                  return dbx.filesUploadSessionStart({ close: false, contents: blob})
+                                      .then(response => response.session_id)
+                              });
+                          } else if (idx < items.length-1) {
+                              // Append part to the upload session
+                              return acc.then(function(sessionId) {
+                                  var cursor = { session_id: sessionId, offset: idx * maxBlob };
+                                  return dbx.filesUploadSessionAppendV2({ cursor: cursor, close: false, contents: blob }).then(() => sessionId);
+                              });
+                          } else {
+                              // Last chunk of data, close session
+                              return acc.then(function(sessionId) {
+                                  var cursor = { session_id: sessionId, offset: file.size - blob.size };
+                                  var commit = { path: '/' + file.name, mode: 'add', autorename: true, mute: false };
+                                  return dbx.filesUploadSessionFinish({ cursor: cursor, commit: commit, contents: blob });
+                              });
+                          }
+                      }, Promise.resolve());
+
+                      task.then(function(result) {
+                          var results = document.getElementById('results');
+                          results.appendChild(document.createTextNode('File uploaded!'));
+                      }).catch(function(error) {
+                          console.error(error);
+                      });
+                  }
+                  return false;
+              }
+        </script>
+    </body>
+</html>

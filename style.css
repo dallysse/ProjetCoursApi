@@ -1,0 +1,29 @@
+img{
+    width: 100%;
+}
+
+#logo{
+    width: 50%;
+    padding: 2%;
+}
+
+#title{
+    margin-top: 5%;
+}
+
+
+#article{
+    padding: 1%;
+}
+
+h2{
+    margin-top: 5%;
+}
+
+li {
+    margin-top: 1%;
+}
+
+button {
+    background-color: #e47d24;
+}
